@@ -16,18 +16,18 @@ MDFloatLayout:
 
 """
 
-class MainApp(MDApp):
+class TimePickerApp(MDApp):
     def build(self):
         return Builder.load_string(KV)
     
     #Get Time
     def get_time(self, instance, time):
-        print(time) #sent back to tkinter
+        print(time.strftime("%H:%M"), flush = True)
         self.stop()
 
     # Cancel 
     def on_cancel(self, instance, time):
-        print("Canceled")
+        print("", flush = True)
         self.stop()
     
     def show_time_picker(self):
@@ -40,4 +40,5 @@ class MainApp(MDApp):
         dialog.bind(on_save = self.get_time, on_cancel = self.on_cancel)
         dialog.open()
 
-MainApp().run()
+if __name__ == "__main__":
+    TimePickerApp().run()

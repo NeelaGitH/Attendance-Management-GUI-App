@@ -1,4 +1,5 @@
 import os
+import sys
 import glob
 from datetime import datetime
 import pandas as pd
@@ -8,6 +9,7 @@ from tkcalendar import DateEntry
 import subprocess
 import ttkbootstrap as tb
 from tkinter import simpledialog
+import numpy as np
 
 
 STUDENTS_DIR = "students"
@@ -60,20 +62,26 @@ def append_attendance_to_excel(name, date_str, time_str, comment = ""):
             df[col] = None
     
     try:
-        d = datetime.strptime(date_str, "%Y-%m-%d")
+        d = datetime.strptime(date_str, "%d-%m-%Y")
         day = d.strftime("%A")
-        date_fmt = d.strftime("%Y-%m-%d")
+        date_fmt = d.strftime("%d-%m-%Y")
     except Exception:
         day = ""
         date_fmt = date_str
 
     #Compute next class number
-    next_class_no = get_next_class_number(df)
+    if comment not in ["Class Not Counted", "Exam Leave", "Holiday Leave"]:
+        next_class_no = get_next_class_number(df)
+    else:
+        next_class_no = np.nan
     
     if "date" in df.columns and "class timing" in df.columns:
         dup = df[(df["date"].astype(str) == str(date_fmt)) & (df["class timing"].astype(str) == str(time_str))]
         if not dup.empty:
             df.loc[(df["date"].astype(str) == str(date_fmt)) & (df["class timing"].astype(str) == str(time_str)), "comment"] = comment
+            if comment in ["Class Not Counted", "Exam Leave", "Holiday Leave"]:
+                df.loc[(df["date"].astype(str) == str(date_fmt)) & (df["class timing"].astype(str) == str(time_str)), "class no."] = np.nan
+
 
         else:
             new_row = {
@@ -155,9 +163,9 @@ class AttendanceApp:
         #Date
         date_row = ttk.Frame(right)
         date_row.pack(fill = X, pady = 6)
-        ttk.Label(date_row, text = "Date (YYYY-MM-DD):").pack(side = LEFT, padx = (0, 6))
+        ttk.Label(date_row, text = "Date (DD-MM-YYYY):").pack(side = LEFT, padx = (0, 6))
 
-        self.date_picker = tb.DateEntry(date_row,dateformat='%Y-%m-%d',bootstyle="danger",firstweekday = 0)
+        self.date_picker = tb.DateEntry(date_row,dateformat='%d-%m-%Y',bootstyle="danger",firstweekday = 0)
         self.date_picker.pack(side = LEFT)
 
         #Time
@@ -198,9 +206,9 @@ class AttendanceApp:
         self.log_text.pack(fill = BOTH, expand = True)
 
     def pick_time(self):
-        result = subprocess.check_output(["python", "kivyTime.py"]).decode().strip()
-        self.time_var.set(result)
-
+            result = subprocess.check_output(["python", "kivyTime.py"]).decode().strip()
+            self.time_var.set(result)
+        
     def log(self, msg):
         self.log_text.configure(state = NORMAL)
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -244,7 +252,7 @@ class AttendanceApp:
             if new_name not in self.listbox.get(0, END):
                 self.listbox.insert(END, new_name)
                 self.log(f"Added {new_name}")
-
+            
             return
         
 
@@ -270,7 +278,7 @@ class AttendanceApp:
         for i in reversed(sel):
             name = self.listbox.get(i)
             self.listbox.delete(i)
-            self.lof(f"Removed {name}")
+            self.log(f"Removed {name}")
 
     
     def clear_list(self):
@@ -293,16 +301,52 @@ class AttendanceApp:
         names = self.listbox.get(0, END)
 
         for name in names:
+            err_student = []
             try:
                 append_attendance_to_excel(name, date_str, time_str, comment)
                 self.log(f"Marked {name} as {comment}")
 
             except Exception as e:
+                err_student.append(name + ".xlsx")
                 self.log(f"Error writing {name}: {e}")
         
-        messagebox.showinfo("Done", "Marked attendance for listed students.")
+        if err_student:
+            messagebox.showerror(
+            "Excel files open",
+            "Please close the following Excel files:\n\n"
+            + "\n".join(err_student) + "\n\nMarked attendance for rest if any. Please try again after closing the file(s)."
+            )
+
+        else:
+            messagebox.showinfo("Done", "Marked attendance for all listed students.")
+
+def get_open_excel_files(folder):
+    open_files = []
+
+    for filename in os.listdir(folder):
+        if filename.lower().endswith(".xlsx"):
+            path = os.path.join(folder, filename)
+            try:
+                with open(path, "a"):
+                    pass
+            except PermissionError:
+                if not filename.startswith("~$"):
+                    open_files.append(filename)
+    
+    return open_files
 
 def main():
+    open_files = get_open_excel_files(STUDENTS_DIR)
+
+    if open_files:
+        messagebox.showerror(
+            "Excel files open",
+            "Please close the following Excel files and restart the application:\n\n"
+            + "\n".join(open_files) + "\n\nPlease don't open any excel files while the application is running."
+        )
+
+        return
+
     root = tb.Window(themename="darkly")
     app = AttendanceApp(root)
     root.mainloop()
