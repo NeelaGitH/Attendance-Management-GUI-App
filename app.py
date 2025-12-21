@@ -50,6 +50,8 @@ def get_next_class_number(df):
 def append_attendance_to_excel(name, date_str, time_str, comment = ""):
     path = ensure_student_file(name)
 
+
+
     try:
         df = pd.read_excel(path)
 
@@ -70,30 +72,21 @@ def append_attendance_to_excel(name, date_str, time_str, comment = ""):
         date_fmt = date_str
 
     #Compute next class number
-    if comment not in ["Class Not Counted", "Exam Leave", "Holiday Leave"]:
+    if comment in ["Present", "Absent"]:
         next_class_no = get_next_class_number(df)
     else:
         next_class_no = np.nan
     
-    if "date" in df.columns and "class timing" in df.columns:
-        dup = df[(df["date"].astype(str) == str(date_fmt)) & (df["class timing"].astype(str) == str(time_str))]
-        if not dup.empty:
-            df.loc[(df["date"].astype(str) == str(date_fmt)) & (df["class timing"].astype(str) == str(time_str)), "comment"] = comment
-            if comment in ["Class Not Counted", "Exam Leave", "Holiday Leave"]:
-                df.loc[(df["date"].astype(str) == str(date_fmt)) & (df["class timing"].astype(str) == str(time_str)), "class no."] = np.nan
+    new_row = {
+        "class no.": next_class_no,
+        "date":date_fmt,
+        "day": day,
+        "class timing": time_str,
+        "comment": comment
+    }
+    df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
 
-
-        else:
-            new_row = {
-                "class no.": next_class_no,
-                "date":date_fmt,
-                "day": day,
-                "class timing": time_str,
-                "comment": comment
-            }
-            df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-
-        df.to_excel(path, index=False)
+    df.to_excel(path, index=False)
 
 
 class AutocompleteCombobox(ttk.Combobox):
@@ -168,16 +161,34 @@ class AttendanceApp:
         self.date_picker = tb.DateEntry(date_row,dateformat='%d-%m-%Y',bootstyle="danger",firstweekday = 0)
         self.date_picker.pack(side = LEFT)
 
-        #Time
-        time_row = ttk.Frame(right)
-        time_row.pack(fill= X, pady = 6)
-        ttk.Label(time_row, text = "Time (HH:MM)").pack(side = LEFT, padx = (0, 6))
+        #Start Time
+        start_time_row = ttk.Frame(right)
+        start_time_row.pack(fill= X, pady = 6)
+        ttk.Label(start_time_row, text = "Class Start Time (HH:MM)").pack(side = LEFT, padx = (0, 6))
+
+        self.start_hour_var = StringVar(value = "12")
+        start_hour_spin = ttk.Spinbox(start_time_row, from_ = 0, to = 23, wrap = True,textvariable=self.start_hour_var, width = 5, command = self.update_time_var, state="readonly")
+        start_hour_spin.pack(side = LEFT)
+
+        self.start_min_var = StringVar(value = "00")
+        start_min_spin = ttk.Spinbox(start_time_row, from_= 0, to=59, wrap = True, textvariable=self.start_min_var, width = 5, format = "%02.0f", command = self.update_time_var, state="readonly")
+        start_min_spin.pack(side = LEFT)
+
+        #End Time
+        end_time_row = ttk.Frame(right)
+        end_time_row.pack(fill= X, pady = 6)
+        ttk.Label(end_time_row, text = "End Start Time (HH:MM)").pack(side = LEFT, padx = (0, 6))
+
+        self.end_hour_var = StringVar(value = "12")
+        end_hour_spin = ttk.Spinbox(end_time_row, from_ = 0, to = 23, wrap = True,textvariable=self.end_hour_var, width = 5, command=self.update_time_var, state="readonly")
+        end_hour_spin.pack(side = LEFT)
+
+        self.end_min_var = StringVar(value = "00")
+        end_min_spin = ttk.Spinbox(end_time_row, from_= 0, to=59, wrap = True, textvariable=self.end_min_var, width = 5, format = "%02.0f",command= self.update_time_var, state="readonly")
+        end_min_spin.pack(side = LEFT)
 
         self.time_var = StringVar()
-        self.time_var.set(datetime.now().strftime("%H:%M"))
-
-        Button(time_row, text = "Pick Time", command = self.pick_time).pack(side = LEFT, padx = (0, 6))
-        self.time_entry = Label(time_row, textvariable = self.time_var).pack(side = LEFT)
+        self.update_time_var()
 
 
         # Comment dropdown
@@ -190,8 +201,12 @@ class AttendanceApp:
             state = "readonly",
             width = 20
         )
+        self.remark_combo.bind("<<ComboboxSelected>>", self.update_comment_var)
         self.remark_combo.current(0)
         self.remark_combo.pack(side = LEFT)
+
+        self.comment_var = StringVar()
+        self.update_comment_var()
 
         #Save button
         mark_row = ttk.Frame(right)
@@ -205,9 +220,21 @@ class AttendanceApp:
         self.log_text = Text(status_row2, height = 7, state = DISABLED)
         self.log_text.pack(fill = BOTH, expand = True)
 
-    def pick_time(self):
-            result = subprocess.check_output(["python", "kivyTime.py"]).decode().strip()
-            self.time_var.set(result)
+    def update_comment_var(self, event = None):
+        if self.remark_combo.get() == "Holiday Leave":
+            holiday_reason = simpledialog.askstring("Holiday Leave", "Enter which holiday this leave is provided for:")
+            if not holiday_reason:
+                holiday_reason = "Unspecified"
+            holiday = f"Holiday Leave: {holiday_reason}"
+            self.comment_var.set(holiday)
+        
+        else:
+            self.comment_var.set(self.remark_combo.get())
+            
+    
+    def update_time_var(self):
+        selected_time = f"{self.start_hour_var.get()}:{self.start_min_var.get()} to {self.end_hour_var.get()}:{self.end_min_var.get()}"
+        self.time_var.set(selected_time)
         
     def log(self, msg):
         self.log_text.configure(state = NORMAL)
@@ -293,7 +320,7 @@ class AttendanceApp:
         
         date_str = self.date_picker.entry.get()
         time_str = self.time_var.get()
-        comment = self.remark_combo.get().strip()
+        comment = self.comment_var.get().strip()
 
         if not messagebox.askyesno("Confirm", f"Mark {count} students as '{comment}' on {date_str} {time_str}?"):
             return
