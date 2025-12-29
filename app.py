@@ -10,58 +10,82 @@ import subprocess
 import ttkbootstrap as tb
 from tkinter import simpledialog
 import numpy as np
-
+from openpyxl import load_workbook
+from openpyxl.styles import PatternFill
+from openpyxl.styles import Font
 
 STUDENTS_DIR = "students"
 os.makedirs(STUDENTS_DIR, exist_ok=True)
 
 DEFAULT_COLUMNS = ["class no.", "date", "day", "class timing", "comment"]
 
+def default_columns(path, sheet_name = "Sheet1"):
+    wb = load_workbook(path, data_only=True)
+    ws = wb[sheet_name]
+    headers = [cell.value for cell in ws[1]]
+    for i in range(len(headers) - 1,-1, -1):
+        if (headers[i] == None):
+            headers.pop()
+        else:
+            break
+
+    return headers
 
 def list_student_names():
     files = glob.glob(os.path.join(STUDENTS_DIR, "*.xlsx"))
     return sorted([os.path.splitext(os.path.basename(f))[0] for f in files])
 
+def normalize_headers(path):
+    wb = load_workbook(path)
+    ws = wb.active
+
+    headers = default_columns(path)
+
+    cleaned = [str(h).strip().lower() if h is not None else "" for h in headers]
+    green_fill = PatternFill(start_color = "92d050", end_color = "92d050", fill_type = "solid")
+    
+    for col_index, header in enumerate(cleaned, start = 1):
+        ws.cell(row = 1, column=col_index).value = header
+        ws.cell(row = 1, column=col_index).fill = green_fill
+    
+    ws.title = "Sheet1"
+    wb.save(path)
+    
 def ensure_student_file(name):
     path = os.path.join(STUDENTS_DIR, f"{name}.xlsx")
+
     if not os.path.exists(path):
         df = pd.DataFrame(columns = DEFAULT_COLUMNS)
         df.to_excel(path, index = False)
-
+    
+    normalize_headers(path)
     return path
 
-def get_next_class_number(df):
-    if "class no." not in df.columns:
-        return 1
-    nums = []
-    for x in df["class no."]:
-        if pd.isna(x):
-            continue
-        try:
-            nums.append(int(x))
-        except:
-            continue
+def get_next_class_number(path,sheet_name="Sheet1",column_name = "class no."):
+    wb = load_workbook(path, data_only=True)
+    ws = wb[sheet_name]
 
-    if len(nums) == 0:
-        return 1
+    headers = default_columns(path)
     
-    return max(nums) + 1
+    try:
+        col_idx = headers.index(column_name) + 1
+    except ValueError:
+        raise Exception(f"Column '{column_name}' not found")
+
+    for row in range(ws.max_row,1,-1):
+        value = ws.cell(row = row,column = col_idx).value
+        if value not in (None, ""):
+            return int(value) + 1
+    
+    return 1
+   
 
 def append_attendance_to_excel(name, date_str, time_str, comment = ""):
     path = ensure_student_file(name)
+    wb = load_workbook(path)
+    ws = wb.active
 
-
-
-    try:
-        df = pd.read_excel(path)
-
-    except Exception:
-        df = pd.DataFrame(columns = DEFAULT_COLUMNS)
-
-    
-    for col in DEFAULT_COLUMNS:
-        if col not in df.columns:
-            df[col] = None
+    headers = default_columns(path)
     
     try:
         d = datetime.strptime(date_str, "%d-%m-%Y")
@@ -72,10 +96,10 @@ def append_attendance_to_excel(name, date_str, time_str, comment = ""):
         date_fmt = date_str
 
     #Compute next class number
-    if comment in ["Present", "Absent"]:
-        next_class_no = get_next_class_number(df)
+    if comment in ["Attended", "Absent"]:
+        next_class_no = get_next_class_number(path)
     else:
-        next_class_no = np.nan
+        next_class_no = ""
     
     new_row = {
         "class no.": next_class_no,
@@ -84,9 +108,27 @@ def append_attendance_to_excel(name, date_str, time_str, comment = ""):
         "class timing": time_str,
         "comment": comment
     }
-    df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
 
-    df.to_excel(path, index=False)
+    ordered_row = [new_row.get(col.strip().lower(),"") for col in headers]
+    ws.append(ordered_row)
+
+
+    last_row = ws.max_row
+    blue_fill = PatternFill(start_color="92cddc", end_color="92cddc", fill_type="solid")
+    skin_fill = PatternFill(start_color="e6b8b7", end_color="e6b8b7", fill_type="solid")
+
+    comment_col_idx = headers.index("comment") + 1
+
+    if comment in ["Attended", "Absent"]:
+        ws.cell(row = last_row,column = comment_col_idx).fill = blue_fill
+        ws.cell(row = last_row,column = comment_col_idx).font = Font(bold = True)
+    
+    else:
+        for col in range(1, len(headers) + 1):
+            if col == len(headers):
+                ws.cell(row = last_row, column = col).font = Font(bold = True)
+            ws.cell(row = last_row, column = col).fill = skin_fill
+    wb.save(path)
 
 
 class AutocompleteCombobox(ttk.Combobox):
@@ -115,7 +157,7 @@ class AutocompleteCombobox(ttk.Combobox):
 class AttendanceApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Attendance Manager")
+        self.root.title("White Dove Foundation")
         self.root.geometry("1000x1000")
         self._build_ui()
         self.refresh_student_list()
@@ -167,12 +209,16 @@ class AttendanceApp:
         ttk.Label(start_time_row, text = "Class Start Time (HH:MM)").pack(side = LEFT, padx = (0, 6))
 
         self.start_hour_var = StringVar(value = "12")
-        start_hour_spin = ttk.Spinbox(start_time_row, from_ = 0, to = 23, wrap = True,textvariable=self.start_hour_var, width = 5, command = self.update_time_var, state="readonly")
+        start_hour_spin = ttk.Spinbox(start_time_row, from_ = 0, to = 12, wrap = True,textvariable=self.start_hour_var, width = 5, command = self.update_time_var, state="readonly")
         start_hour_spin.pack(side = LEFT)
 
         self.start_min_var = StringVar(value = "00")
         start_min_spin = ttk.Spinbox(start_time_row, from_= 0, to=59, wrap = True, textvariable=self.start_min_var, width = 5, format = "%02.0f", command = self.update_time_var, state="readonly")
         start_min_spin.pack(side = LEFT)
+
+        self.start_ampm = StringVar(value = "AM")
+        start_ampm_spin = ttk.Spinbox(start_time_row, values = ("AM", "PM"), wrap = True, textvariable=self.start_ampm,width = 5, command = self.update_time_var,state = "readonly")
+        start_ampm_spin.pack(side = LEFT)
 
         #End Time
         end_time_row = ttk.Frame(right)
@@ -180,12 +226,16 @@ class AttendanceApp:
         ttk.Label(end_time_row, text = "End Start Time (HH:MM)").pack(side = LEFT, padx = (0, 6))
 
         self.end_hour_var = StringVar(value = "12")
-        end_hour_spin = ttk.Spinbox(end_time_row, from_ = 0, to = 23, wrap = True,textvariable=self.end_hour_var, width = 5, command=self.update_time_var, state="readonly")
+        end_hour_spin = ttk.Spinbox(end_time_row, from_ = 0, to = 12, wrap = True,textvariable=self.end_hour_var, width = 5, command=self.update_time_var, state="readonly")
         end_hour_spin.pack(side = LEFT)
 
         self.end_min_var = StringVar(value = "00")
         end_min_spin = ttk.Spinbox(end_time_row, from_= 0, to=59, wrap = True, textvariable=self.end_min_var, width = 5, format = "%02.0f",command= self.update_time_var, state="readonly")
         end_min_spin.pack(side = LEFT)
+
+        self.end_ampm = StringVar(value = "AM")
+        end_ampm_spin = ttk.Spinbox(end_time_row, values = ("AM", "PM"), wrap = True, textvariable=self.end_ampm,width = 5, command = self.update_time_var,state = "readonly")
+        end_ampm_spin.pack(side = LEFT)
 
         self.time_var = StringVar()
         self.update_time_var()
@@ -197,7 +247,7 @@ class AttendanceApp:
         ttk.Label(remark_row, text = "Comment:").pack(side = LEFT, padx = (0, 6))
         self.remark_combo = ttk.Combobox(
             remark_row,
-            values = ["Present", "Absent", "Class Not Counted", "Exam Leave", "Holiday Leave"],
+            values = ["Attended", "Absent", "Class Not Counted", "Exam Leave", "Holiday Leave", "Free Class"],
             state = "readonly",
             width = 20
         )
@@ -233,7 +283,7 @@ class AttendanceApp:
             
     
     def update_time_var(self):
-        selected_time = f"{self.start_hour_var.get()}:{self.start_min_var.get()} to {self.end_hour_var.get()}:{self.end_min_var.get()}"
+        selected_time = f"{self.start_hour_var.get()}:{self.start_min_var.get()} {self.start_ampm.get()} to {self.end_hour_var.get()}:{self.end_min_var.get()} {self.end_ampm.get()}"
         self.time_var.set(selected_time)
         
     def log(self, msg):
